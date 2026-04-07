@@ -1,0 +1,15 @@
+{application, zaya_pool,
+ [{description, "generic batched write pool for zaya backends"},
+  {vsn, git},
+  {registered, []},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+  {included_applications,[
+  ]},
+  {licenses, ["MIT"]},
+  {links, []}
+ ]}.
