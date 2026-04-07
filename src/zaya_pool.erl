@@ -20,7 +20,6 @@
 
 start_link(#{pool_size := _PoolSize} = Params)->
   {ok, Supervisor} = supervisor:start_link(?MODULE, [Params]),
-  true = unlink(Supervisor),
   ok = zaya_pool_monitor:await_ready(Supervisor),
   {ok, Supervisor}.
 
