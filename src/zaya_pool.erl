@@ -66,19 +66,12 @@ call(Pool, Request, Retries) when Retries > 1->
     zaya_pool_worker:call(Worker, Request)
   catch
     exit:_Reason->
-      yield(),
+      receive after 10 -> ok end,
       call(Pool, Request, Retries - 1)
   end;
 call(Pool, Request, 1)->
   Worker = zaya_pool_monitor:worker(Pool),
   zaya_pool_worker:call(Worker, Request).
-
-yield()->
-  receive
-  after
-    0 ->
-      ok
-  end.
 
 worker_specs(Params, PoolSize)->
   [
