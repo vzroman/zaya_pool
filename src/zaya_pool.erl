@@ -19,9 +19,7 @@
 -define(STORAGE_KEY(Supervisor), {?MODULE, Supervisor}).
 
 start_link(#{pool_size := _PoolSize} = Params)->
-  {ok, Supervisor} = supervisor:start_link(?MODULE, [Params]),
-  ok = zaya_pool_monitor:await_ready(Supervisor),
-  {ok, Supervisor}.
+  supervisor:start_link(?MODULE, [Params]).
 
 call(Pool, Request)->
   Worker = worker(Pool),
@@ -42,16 +40,19 @@ stop(Supervisor) when is_pid(Supervisor)->
   end.
 
 init([Params]) ->
-  Children = [
-    #{
-      id => zaya_pool_monitor,
-      start => {zaya_pool_monitor, start_link, [self(), Params]},
-      restart => permanent,
-      shutdown => ?STOP_TIMEOUT,
-      type => worker,
-      modules => [zaya_pool_monitor]
-    }
-  ],
+  #{pool_size := PoolSize} = Params,
+  Children =
+    [
+      #{
+        id => zaya_pool_monitor,
+        start => {zaya_pool_monitor, start_link, [self(), Params]},
+        restart => permanent,
+        shutdown => ?STOP_TIMEOUT,
+        type => worker,
+        modules => [zaya_pool_monitor]
+      }
+      | worker_specs(Params, PoolSize)
+    ],
 
   Supervisor = #{
     strategy => one_for_one,
@@ -98,3 +99,16 @@ yield()->
     0 ->
       ok
   end.
+
+worker_specs(Params, PoolSize)->
+  [
+    #{
+      id => {worker, Index},
+      start => {zaya_pool_worker, start_link, [Params, Index, self()]},
+      restart => permanent,
+      shutdown => ?STOP_TIMEOUT,
+      type => worker,
+      modules => [zaya_pool_worker]
+    }
+   || Index <- lists:seq(1, PoolSize)
+  ].
