@@ -37,9 +37,9 @@ call(Worker, Requests)->
   Monitor = erlang:monitor(process, Worker),
   Worker ! {pool_call, {self(), Monitor}, Requests},
   receive
-    {pool_reply, Monitor, Reply}->
+    {pool_reply, Monitor, ok}->
       erlang:demonitor(Monitor, [flush]),
-      handle_reply(Reply);
+      ok;
     {'DOWN', Monitor, process, Worker, Reason}->
       exit(Reason)
   end.
@@ -68,14 +68,17 @@ loop(
   flush_batches(Batches, Ref, Module),
   loop(NextBatch, State).
 
-collect_requests(MaxSize, undefined)->
+collect_requests(
+    MaxSize,
+    _Batch = undefined
+)->
   receive
     {pool_call, From, Requests}->
       case merge_requests(From, Requests, undefined) of
         [Batch] ->
           collect_requests(MaxSize, Batch);
-        Batches0 ->
-          split_batches(Batches0)
+        Batches ->
+          split_batches(Batches)
       end
   end;
 collect_requests(
@@ -89,8 +92,8 @@ collect_requests(
       case merge_requests(From, Requests, Batch0) of
         [Batch] ->
           collect_requests(MaxSize, Batch);
-        Batches0 ->
-          split_batches(Batches0)
+        Batches ->
+          split_batches(Batches)
       end
   after
     0 ->
@@ -146,15 +149,8 @@ merge_requests(
   [Batch0#batch{reply = [From | ReplyTo]}].
 
 flush_batches([Batch | Rest], Ref, Module)->
-  Reply =
-    try
-      flush_batch(Batch, Ref, Module),
-      ok
-    catch
-      Class:Reason:Stack->
-        {raise, Class, Reason, Stack}
-    end,
-  reply_batch(Batch, Reply),
+  flush_batch(Batch, Ref, Module),
+  reply_batch( Batch ),
   flush_batches(Rest, Ref, Module);
 flush_batches([], _Ref, _Module)->
   ok.
@@ -183,20 +179,10 @@ merged_data([Data])->
 merged_data(DataList)->
   lists:append(lists:reverse(DataList)).
 
-reply_batch(#batch{reply = ReplyTo}, Reply)->
-  lists:foreach(
-    fun(From)->
-      reply(From, Reply)
-    end,
-    lists:reverse(ReplyTo)
-  ),
+reply_batch(#batch{reply = ReplyTo})->
+  [reply(To) || To <- lists:reverse(ReplyTo)],
   ok.
 
-reply({Pid, Monitor}, Reply)->
-  Pid ! {pool_reply, Monitor, Reply},
+reply({Pid, Monitor})->
+  Pid ! {pool_reply, Monitor, ok},
   ok.
-
-handle_reply({raise, Class, Reason, Stack})->
-  erlang:raise(Class, Reason, Stack);
-handle_reply(Reply)->
-  Reply.

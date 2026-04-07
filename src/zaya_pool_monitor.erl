@@ -4,6 +4,7 @@
 
 -export([
   start_link/2,
+  worker/1,
   register_worker/3
 ]).
 
@@ -20,8 +21,18 @@
 }).
 
 -define(STORAGE_KEY(Supervisor), {zaya_pool, Supervisor}).
+
 start_link(Supervisor, Params)->
   gen_server:start_link(?MODULE, [Supervisor, Params], []).
+
+worker(Supervisor)->
+  #{
+    counter := Counter,
+    size := Size,
+    workers := Workers
+  } = storage(Supervisor),
+  Index = (atomics:add_get(Counter, 1, 1) rem Size) + 1,
+  element(Index, Workers).
 
 register_worker(Supervisor, Index, Worker)->
   gen_server:call(monitor(Supervisor), {register_worker, Index, Worker}, infinity).
@@ -63,8 +74,11 @@ register_worker_pid(Index, Worker, #state{supervisor = Supervisor} = State)->
   ),
   State.
 
+storage(Supervisor)->
+  persistent_term:get(?STORAGE_KEY(Supervisor)).
+
 monitor(Supervisor)->
-  case persistent_term:get(?STORAGE_KEY(Supervisor)) of
+  case storage(Supervisor) of
     #{monitor := Monitor} when is_pid(Monitor)->
       Monitor;
     _ ->
