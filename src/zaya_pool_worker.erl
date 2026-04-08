@@ -16,9 +16,9 @@
 }).
 
 -record(batch, {
-  requests = [],
-  size = 0,
-  reply = []
+  requests,
+  size,
+  reply
 }).
 
 start_link(
@@ -69,7 +69,12 @@ loop(
 collect_requests(BatchSize)->
   receive
     {pool_call, From, Requests}->
-      collect_requests(BatchSize, append_request(From, Requests, #batch{}));
+      Batch = #batch{
+        requests = [Requests],
+        size = request_size(Requests, 0),
+        reply = [From]
+      },
+      collect_requests(BatchSize, Batch);
     {'EXIT', _From, Reason}->
       exit(Reason)
   end.
@@ -80,57 +85,42 @@ collect_requests(
     size = Size
   }
 ) when Size >= BatchSize->
-  drain_requests(Batch);
-collect_requests(BatchSize, Batch)->
+  Batch;
+collect_requests(
+    BatchSize,
+    Batch0 = #batch{
+      requests = BatchRequests,
+      size = Size,
+      reply = ReplyTo
+    })->
   receive
     {pool_call, From, Requests}->
-      collect_requests(BatchSize, append_request(From, Requests, Batch))
+      Batch = Batch0#batch{
+        requests = [Requests|BatchRequests],
+        size = request_size(Requests, Size),
+        reply = [From|ReplyTo]
+      },
+      collect_requests(BatchSize, Batch)
   after
     0 ->
-      Batch
+      Batch0
   end.
 
-drain_requests(Batch)->
-  receive
-    {pool_call, From, Requests}->
-      drain_requests(append_request(From, Requests, Batch))
-  after
-    0 ->
-      Batch
-  end.
-
-append_request(
-  From,
-  Requests,
-  Batch = #batch{
-    requests = RequestsRev,
-    size = Size,
-    reply = ReplyTo
-  }
-) ->
-  Batch#batch{
-    requests = lists:reverse(Requests, RequestsRev),
-    size = Size + request_size(Requests),
-    reply = [From | ReplyTo]
-  }.
-
-request_size(Requests)->
-  lists:sum(
-    [
-      length(Data)
-     || {_Type, Data} <- Requests
-    ]
-  ).
+request_size([{_Type, Data}|Rest], Sum)->
+  request_size(Rest, Sum + length(Data));
+request_size([], Sum)->
+  Sum.
 
 flush_batch(
   #batch{
-    requests = RequestsRev,
+    requests = Requests0,
     reply = ReplyTo
   },
   Ref,
   Module
 )->
-  ok = Module:pool_batch(Ref, lists:reverse(RequestsRev)),
+  Requests = lists:append( lists:reverse( Requests0) ),
+  ok = Module:pool_batch(Ref, Requests),
   [reply(To) || To <- lists:reverse(ReplyTo)],
   ok.
 
