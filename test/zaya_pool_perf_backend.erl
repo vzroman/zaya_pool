@@ -4,8 +4,7 @@
   setup/2,
   cleanup/1,
   stats/1,
-  pool_write/2,
-  pool_delete/2
+  pool_batch/2
 ]).
 
 -define(TABLE, ?MODULE).
@@ -13,7 +12,7 @@
 setup(Ref, EntriesPerWrite)->
   ensure_table(),
   cleanup(Ref),
-  true = ets:insert(?TABLE, {{entries_per_write, Ref}, EntriesPerWrite}),
+  _ = EntriesPerWrite,
   true = ets:insert(?TABLE, {{writes, Ref}, 0}),
   true = ets:insert(?TABLE, {{entries, Ref}, 0}),
   true = ets:insert(?TABLE, {{flushes, Ref}, 0}),
@@ -22,7 +21,6 @@ setup(Ref, EntriesPerWrite)->
 
 cleanup(Ref)->
   ensure_table(),
-  ets:match_delete(?TABLE, {{entries_per_write, Ref}, '_'}),
   ets:match_delete(?TABLE, {{writes, Ref}, '_'}),
   ets:match_delete(?TABLE, {{entries, Ref}, '_'}),
   ets:match_delete(?TABLE, {{flushes, Ref}, '_'}),
@@ -38,27 +36,42 @@ stats(Ref)->
     deletes => counter(Ref, deletes)
   }.
 
-pool_write(Ref, Data)->
+pool_batch(Ref, Requests)->
   ensure_table(),
-  Entries = length(Data),
-  Writes = Entries div entries_per_write(Ref),
+  #{writes := Writes, entries := Entries, deletes := Deletes} = batch_stats(Requests),
   _ = ets:update_counter(?TABLE, {writes, Ref}, Writes),
   _ = ets:update_counter(?TABLE, {entries, Ref}, Entries),
+  _ = ets:update_counter(?TABLE, {deletes, Ref}, Deletes),
   _ = ets:update_counter(?TABLE, {flushes, Ref}, 1),
   ok.
-
-pool_delete(Ref, Data)->
-  ensure_table(),
-  _ = ets:update_counter(?TABLE, {deletes, Ref}, length(Data)),
-  ok.
-
-entries_per_write(Ref)->
-  [{_, Value}] = ets:lookup(?TABLE, {entries_per_write, Ref}),
-  Value.
 
 counter(Ref, Name)->
   [{_, Value}] = ets:lookup(?TABLE, {Name, Ref}),
   Value.
+
+batch_stats(Requests)->
+  lists:foldl(
+    fun
+      ({write, Data}, #{writes := Writes, entries := Entries, deletes := Deletes})->
+        #{
+          writes => Writes + 1,
+          entries => Entries + length(Data),
+          deletes => Deletes
+        };
+      ({delete, Data}, #{writes := Writes, entries := Entries, deletes := Deletes})->
+        #{
+          writes => Writes,
+          entries => Entries,
+          deletes => Deletes + length(Data)
+        }
+    end,
+    #{
+      writes => 0,
+      entries => 0,
+      deletes => 0
+    },
+    Requests
+  ).
 
 ensure_table()->
   case ets:info(?TABLE) of

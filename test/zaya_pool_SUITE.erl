@@ -91,8 +91,8 @@ write_delete_test(Config)->
 
       ?assertEqual(
         [
-          {write, [{k1, v1}, {k2, v2}]},
-          {delete, [k1]}
+          {batch, [{write, [{k1, v1}, {k2, v2}]}]},
+          {batch, [{delete, [k1]}]}
         ],
         strip_workers(zaya_pool_test_backend:events(Ref))
       )
@@ -123,7 +123,14 @@ batching_test(Config)->
 
       ?assertEqual(
         [
-          {write, [{k1, v1}, {k2, v2}, {k3, v3}]}
+          {
+            batch,
+            [
+              {write, [{k1, v1}]},
+              {write, [{k2, v2}]},
+              {write, [{k3, v3}]}
+            ]
+          }
         ],
         strip_workers(zaya_pool_test_backend:events(Ref))
       )
@@ -153,7 +160,7 @@ retry_after_crash_test(Config)->
 
       ?assertEqual(
         [
-          {write, [{retry_key, retry_value}]}
+          {batch, [{write, [{retry_key, retry_value}]}]}
         ],
         strip_workers(zaya_pool_test_backend:events(Ref))
       )
