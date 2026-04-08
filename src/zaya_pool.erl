@@ -16,9 +16,10 @@
 -define(MAX_PERIOD, 1000).
 -define(STOP_TIMEOUT, 5000).
 -define(CALL_RETRY_COUNT, 10).
+-define(DEFAULT_BATCH_SIZE, 1000).
 
-start_link(#{pool_size := _PoolSize} = Params)->
-  supervisor:start_link(?MODULE, [Params]).
+start_link(Params) when is_map(Params)->
+  supervisor:start_link(?MODULE, [defaults(Params)]).
 
 call(Pool, Request)->
   call(Pool, Request, ?CALL_RETRY_COUNT).
@@ -85,3 +86,12 @@ worker_specs(Params, PoolSize)->
     }
    || Index <- lists:seq(1, PoolSize)
   ].
+
+defaults(Params)->
+  maps:merge(
+    #{
+      pool_size => erlang:system_info(logical_processors),
+      batch_size => ?DEFAULT_BATCH_SIZE
+    },
+    Params
+  ).

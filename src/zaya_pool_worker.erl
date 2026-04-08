@@ -12,12 +12,11 @@
 -record(state, {
   ref,
   module,
-  max_size
+  batch_size
 }).
 
 -record(batch, {
-  type,
-  data,
+  requests,
   size,
   reply
 }).
@@ -45,141 +44,83 @@ call(Worker, Requests)->
   end.
 
 init(Ref, BatchSize, Module, Index, Supervisor)->
+  process_flag(trap_exit, true),
   ok = zaya_pool_monitor:register_worker(Supervisor, Index, self()),
   proc_lib:init_ack({ok, self()}),
   loop(
-    undefined,
     #state{
       ref = Ref,
       module = Module,
-      max_size = BatchSize
+      batch_size = BatchSize
     }
   ).
 
 loop(
-  PendingBatch,
   #state{
-    max_size = MaxSize,
+    batch_size = BatchSize,
     ref = Ref,
     module = Module
   } = State
 )->
-  {Batches, NextBatch} = collect_requests(MaxSize, PendingBatch),
-  flush_batches(Batches, Ref, Module),
-  loop(NextBatch, State).
+  Batch = collect_requests(BatchSize),
+  flush_batch(Batch, Ref, Module),
+  loop(State).
+
+collect_requests(BatchSize)->
+  receive
+    {pool_call, From, Requests}->
+      Batch = #batch{
+        requests = [Requests],
+        size = request_size(Requests, 0),
+        reply = [From]
+      },
+      collect_requests(BatchSize, Batch);
+    {'EXIT', _From, Reason}->
+      exit(Reason)
+  end.
 
 collect_requests(
-    MaxSize,
-    _Batch = undefined
-)->
-  receive
-    {pool_call, From, Requests}->
-      case merge_requests(From, Requests, undefined) of
-        [Batch] ->
-          collect_requests(MaxSize, Batch);
-        Batches ->
-          split_batches(Batches)
-      end
-  end;
-collect_requests(
-  MaxSize,
-  Batch0 = #batch{
-    size = BatchSize
+  BatchSize,
+  Batch = #batch{
+    size = Size
   }
-) when BatchSize < MaxSize->
+) when Size >= BatchSize->
+  Batch;
+collect_requests(
+    BatchSize,
+    Batch0 = #batch{
+      requests = BatchRequests,
+      size = Size,
+      reply = ReplyTo
+    })->
   receive
     {pool_call, From, Requests}->
-      case merge_requests(From, Requests, Batch0) of
-        [Batch] ->
-          collect_requests(MaxSize, Batch);
-        Batches ->
-          split_batches(Batches)
-      end
+      Batch = Batch0#batch{
+        requests = [Requests|BatchRequests],
+        size = request_size(Requests, Size),
+        reply = [From|ReplyTo]
+      },
+      collect_requests(BatchSize, Batch)
   after
     0 ->
-      {[Batch0], undefined}
-  end;
-collect_requests(_MaxSize, Batch = #batch{})->
-  {[Batch], undefined}.
+      Batch0
+  end.
 
-split_batches(Batches0)->
-  {Batches, [Next]} = lists:split(length(Batches0) - 1, Batches0),
-  {Batches, Next}.
+request_size([{_Type, Data}|Rest], Sum)->
+  request_size(Rest, Sum + length(Data));
+request_size([], Sum)->
+  Sum.
 
-merge_requests(From, [{Type, Data} | Rest], undefined)->
-  Batch = #batch{
-    type = Type,
-    data = [Data],
-    size = length(Data),
-    reply = []
-  },
-  merge_requests(From, Rest, Batch);
-merge_requests(
-  From,
-  [{Type, Data} | Rest],
-  Batch0 = #batch{
-    type = BatchType,
-    size = BatchSize,
-    data = BatchData
-  }
-) ->
-  if
-    Type =:= BatchType ->
-      Batch = Batch0#batch{
-        size = BatchSize + length(Data),
-        data = [Data | BatchData]
-      },
-      merge_requests(From, Rest, Batch);
-    true ->
-      NextBatch = #batch{
-        type = Type,
-        data = [Data],
-        size = length(Data),
-        reply = []
-      },
-      [Batch0 | merge_requests(From, Rest, NextBatch)]
-  end;
-merge_requests(
-  From,
-  [],
-  Batch0 = #batch{
+flush_batch(
+  #batch{
+    requests = Requests0,
     reply = ReplyTo
-  }
-) ->
-  [Batch0#batch{reply = [From | ReplyTo]}].
-
-flush_batches([Batch | Rest], Ref, Module)->
-  flush_batch(Batch, Ref, Module),
-  reply_batch( Batch ),
-  flush_batches(Rest, Ref, Module);
-flush_batches([], _Ref, _Module)->
-  ok.
-
-flush_batch(
-  #batch{
-    type = write,
-    data = DataList
   },
   Ref,
   Module
 )->
-  ok = Module:pool_write(Ref, merged_data(DataList));
-flush_batch(
-  #batch{
-    type = delete,
-    data = DataList
-  },
-  Ref,
-  Module
-)->
-  ok = Module:pool_delete(Ref, merged_data(DataList)).
-
-merged_data([Data])->
-  Data;
-merged_data(DataList)->
-  lists:append(lists:reverse(DataList)).
-
-reply_batch(#batch{reply = ReplyTo})->
+  Requests = lists:append( lists:reverse( Requests0) ),
+  ok = Module:pool_batch(Ref, Requests),
   [reply(To) || To <- lists:reverse(ReplyTo)],
   ok.
 
