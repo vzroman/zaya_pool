@@ -15,6 +15,7 @@
 ]).
 
 -export([
+  default_params_test/1,
   registration_test/1,
   write_delete_test/1,
   batching_test/1,
@@ -24,6 +25,7 @@
 
 all()->
   [
+    default_params_test,
     registration_test,
     write_delete_test,
     batching_test,
@@ -54,6 +56,32 @@ init_per_testcase(_, Config)->
 end_per_testcase(_, Config)->
   Ref = ?config(ref, Config),
   ok = zaya_pool_test_backend:cleanup(Ref).
+
+default_params_test(Config)->
+  Ref = ?config(ref, Config),
+  MinimalParams = #{
+    ref => Ref,
+    module => zaya_pool_test_backend
+  },
+  {ok, Pool} = zaya_pool:start_link(MinimalParams),
+  try
+    Storage = persistent_term:get(storage_key(Pool)),
+    PoolSize = erlang:system_info(logical_processors),
+
+    ?assertEqual(PoolSize, maps:get(size, Storage)),
+    ?assertEqual(PoolSize, tuple_size(maps:get(workers, Storage))),
+
+    ok = zaya_pool:call(Pool, [{write, [{default_key, default_value}]}]),
+
+    ?assertEqual(
+      [
+        {batch, [{write, [{default_key, default_value}]}]}
+      ],
+      strip_workers(zaya_pool_test_backend:events(Ref))
+    )
+  after
+    ok = zaya_pool:stop(Pool)
+  end.
 
 registration_test(Config)->
   with_pool(
