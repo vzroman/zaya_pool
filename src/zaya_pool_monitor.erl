@@ -11,6 +11,7 @@
 -export([
   init/1,
   handle_call/3,
+  handle_cast/2,
   handle_info/2,
   terminate/2,
   code_change/3
@@ -38,6 +39,7 @@ register_worker(Supervisor, Index, Worker)->
   gen_server:call(monitor(Supervisor), {register_worker, Index, Worker}, infinity).
 
 init([Supervisor, #{pool_size := Size}])->
+  process_flag(trap_exit, true),
   persistent_term:put(
     ?STORAGE_KEY(Supervisor),
     #{
@@ -51,6 +53,9 @@ init([Supervisor, #{pool_size := Size}])->
 
 handle_call({register_worker, Index, Worker}, _From, State)->
   {reply, ok, register_worker_pid(Index, Worker, State)}.
+
+handle_cast(_Request, State)->
+  {noreply, State}.
 
 handle_info(_Info, State)->
   {noreply, State}.
