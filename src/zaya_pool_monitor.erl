@@ -28,11 +28,10 @@ start_link(Supervisor, Params)->
 
 worker(Supervisor)->
   #{
-    counter := Counter,
     size := Size,
     workers := Workers
   } = storage(Supervisor),
-  Index = (atomics:add_get(Counter, 1, 1) rem Size) + 1,
+  Index = (erlang:system_time(millisecond) rem Size) + 1,
   element(Index, Workers).
 
 register_worker(Supervisor, Index, Worker)->
@@ -45,7 +44,6 @@ init([Supervisor, #{pool_size := Size}])->
     #{
       monitor => self(),
       workers => erlang:make_tuple(Size, undefined),
-      counter => atomics:new(1, [{signed, false}]),
       size => Size
     }
   ),
